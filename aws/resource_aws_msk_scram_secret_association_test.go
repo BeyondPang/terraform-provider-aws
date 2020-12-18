@@ -31,6 +31,7 @@ func TestAccAwsMskScramSecretAssociation_basic(t *testing.T) {
 					resource.TestCheckResourceAttrPair(resourceName, "cluster_arn", clusterResourceName, "arn"),
 					resource.TestCheckResourceAttr(resourceName, "secret_arn_list.#", "1"),
 					resource.TestCheckTypeSetElemAttrPair(resourceName, "secret_arn_list.*", secretResourceName, "arn"),
+					resource.TestCheckResourceAttr(resourceName, "scram_secrets.#", "1"),
 				),
 			},
 			{
@@ -68,6 +69,7 @@ func TestAccAwsMskScramSecretAssociation_update(t *testing.T) {
 					resource.TestCheckTypeSetElemAttrPair(resourceName, "secret_arn_list.*", secretResourceName, "arn"),
 					resource.TestCheckTypeSetElemAttrPair(resourceName, "secret_arn_list.*", secretResourceName2, "arn"),
 					resource.TestCheckTypeSetElemAttrPair(resourceName, "secret_arn_list.*", secretResourceName3, "arn"),
+					resource.TestCheckResourceAttr(resourceName, "scram_secrets.#", "3"),
 				),
 			},
 			{
@@ -77,7 +79,54 @@ func TestAccAwsMskScramSecretAssociation_update(t *testing.T) {
 					resource.TestCheckResourceAttr(resourceName, "secret_arn_list.#", "2"),
 					resource.TestCheckTypeSetElemAttrPair(resourceName, "secret_arn_list.*", secretResourceName, "arn"),
 					resource.TestCheckTypeSetElemAttrPair(resourceName, "secret_arn_list.*", secretResourceName2, "arn"),
+					resource.TestCheckResourceAttr(resourceName, "scram_secrets.#", "2"),
 				),
+			},
+			{
+				ResourceName:      resourceName,
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
+func TestAccAwsMskScramSecretAssociation_distributedKeyManagement(t *testing.T) {
+	rName := acctest.RandomWithPrefix("tf-acc-test")
+	resourceName := "aws_msk_scram_secret_association.test"
+	otherResourceName := "aws_msk_scram_secret_association.other"
+	secretResourceName := "aws_secretsmanager_secret.test.0"
+	secretResourceName2 := "aws_secretsmanager_secret.test.1"
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t); testAccPreCheckAWSMsk(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testAccCheckMskScramSecretAssociationDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccMskScramSecretAssociation_basic(rName, 1),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckMskScramSecretAssociationExists(resourceName),
+				),
+			},
+			{
+				Config: testAccMskScramSecretAssociation_distributed(rName, 2),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckMskScramSecretAssociationExists(resourceName),
+					resource.TestCheckResourceAttr(resourceName, "secret_arn_list.#", "1"),
+					resource.TestCheckTypeSetElemAttrPair(resourceName, "secret_arn_list.*", secretResourceName, "arn"),
+					resource.TestCheckResourceAttr(otherResourceName, "secret_arn_list.#", "1"),
+					resource.TestCheckTypeSetElemAttrPair(otherResourceName, "secret_arn_list.*", secretResourceName2, "arn"),
+				),
+			},
+			{
+				Config: testAccMskScramSecretAssociation_distributed(rName, 2),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckMskScramSecretAssociationExists(resourceName),
+					resource.TestCheckResourceAttr(resourceName, "scram_secrets.#", "2"),
+					resource.TestCheckResourceAttr(otherResourceName, "scram_secrets.#", "2"),
+				),
+				PlanOnly: true,
 			},
 			{
 				ResourceName:      resourceName,
@@ -243,6 +292,24 @@ resource "aws_msk_scram_secret_association" "test" {
   secret_arn_list = aws_secretsmanager_secret.test[*].arn
 
   depends_on = [aws_secretsmanager_secret_version.test]
+}
+`)
+}
+
+func testAccMskScramSecretAssociation_distributed(rName string, count int) string {
+	return composeConfig(
+		testAccMskClusterBaseConfig(),
+		testAccMskScramSecretAssociationBaseConfig(rName, count), `
+resource "aws_msk_scram_secret_association" "test" {
+  cluster_arn     = aws_msk_cluster.test.arn
+  secret_arn_list = [aws_secretsmanager_secret.test[0].arn]
+
+  depends_on = [aws_secretsmanager_secret_version.test]
+}
+
+resource "aws_msk_scram_secret_association" "other" {
+  cluster_arn     = aws_msk_cluster.test.arn
+  secret_arn_list = [aws_secretsmanager_secret.test[1].arn]
 }
 `)
 }
